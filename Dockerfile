@@ -27,5 +27,6 @@ RUN pip install -e .
 # Expose the port the app runs on
 EXPOSE 8080
 
-# Run the MCP server in SSE mode
+# Run the MCP server
+# Using uvicorn directly or the CLI module
 CMD ["python", "-m", "agent_mcp.cli", "--port", "8080", "--transport", "sse"]

@@ -1,7 +1,7 @@
 anyio
 click
 openai>=1.0.0
-starlette
+starlette>=1.0.0
 uvicorn
 jinja2
 python-dotenv

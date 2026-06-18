@@ -1,6 +1,7 @@
 # Agent-MCP/mcp_template/mcp_server_src/app/main_app.py
 import uuid
 import datetime # For SSE connection logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List, Optional # Added List and Optional
 import os # Added os import
@@ -93,18 +94,14 @@ def create_app(project_dir: str, admin_token_cli: Optional[str] = None) -> Starl
     """
     Creates and configures the main Starlette application.
     """
-    # Define lifecycle events
-    async def on_app_startup():
-        # Call the centralized application startup logic
+    # Define lifecycle using the lifespan context manager (Starlette 1.x+)
+    @asynccontextmanager
+    async def lifespan(app):
+        # Startup
         await application_startup(project_dir_path_str=project_dir, admin_token_param=admin_token_cli)
-        # Start background tasks within a task group managed by Uvicorn/Hypercorn or AnyIO runner
-        # This requires the server runner to manage the task group.
-        # For now, we assume the main CLI runner will handle the task group.
-        # If Uvicorn is run programmatically, its 'lifespan' can manage this.
         logger.info("Starlette app startup complete. Background tasks should be started by the server runner.")
-
-    async def on_app_shutdown():
-        # Call the centralized application shutdown logic
+        yield
+        # Shutdown
         await application_shutdown()
         logger.info("Starlette app shutdown complete.")
 
@@ -155,8 +152,7 @@ def create_app(project_dir: str, admin_token_cli: Optional[str] = None) -> Starl
     # Create the Starlette application instance
     app = Starlette(
         routes=all_routes,
-        on_startup=[on_app_startup], # List of startup handlers
-        on_shutdown=[on_app_shutdown], # List of shutdown handlers
+        lifespan=lifespan,
         middleware=middleware_stack,
         debug=os.environ.get("MCP_DEBUG", "false").lower() == "true" # Optional debug mode
     )

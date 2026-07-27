@@ -99,6 +99,10 @@ async def application_startup(
     effective_admin_token: Optional[str] = None
     token_source_description: str = ""
 
+    # A remotely deployed service must use an explicit, rotatable credential.
+    # The CLI argument remains available for local use.
+    admin_token_param = admin_token_param or os.environ.get("HERMES_MCP_TOKEN")
+
     try:
         conn_admin_token = get_db_connection()
         cursor = conn_admin_token.cursor()
@@ -164,7 +168,7 @@ async def application_startup(
                 logger.info(f"Generated and stored new admin token.")
 
         g.admin_token = effective_admin_token  # Set the global admin token
-        logger.info(f"MCP Admin Token ({token_source_description}): {g.admin_token}")
+        logger.info(f"MCP admin token initialised from {token_source_description}.")
 
     except sqlite3.Error as e_sql_admin:
         logger.error(
@@ -172,7 +176,7 @@ async def application_startup(
             exc_info=True,
         )
         g.admin_token = admin_token_param if admin_token_param else generate_token()
-        logger.warning(f"Using temporary admin token due to DB error: {g.admin_token}")
+        logger.warning("Using a temporary admin token because the database lookup failed.")
     except Exception as e_admin:
         logger.error(
             f"Unexpected error during admin token persistence: {e_admin}. Falling back to temporary token.",
@@ -180,7 +184,7 @@ async def application_startup(
         )
         g.admin_token = admin_token_param if admin_token_param else generate_token()
         logger.warning(
-            f"Using temporary admin token due to unexpected error: {g.admin_token}"
+            "Using a temporary admin token because token initialisation failed."
         )
     finally:
         if conn_admin_token:

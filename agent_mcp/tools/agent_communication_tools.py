@@ -348,6 +348,7 @@ async def get_agent_messages_tool_impl(arguments: Dict[str, Any]) -> List[mcp_ty
             priority_icon = {"low": "🔵", "normal": "⚪", "high": "🟡", "urgent": "🔴"}.get(msg["priority"], "⚪")
             
             response_lines.append(f"{direction} {read_status} {priority_icon} [{msg['message_type']}] {other_agent}")
+            response_lines.append(f"   ID: {msg['message_id']}")
             response_lines.append(f"   {msg['timestamp']}")
             response_lines.append(f"   {msg['message_content']}")
             response_lines.append("")

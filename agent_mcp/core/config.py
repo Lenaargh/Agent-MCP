@@ -232,6 +232,23 @@ def get_db_path() -> Path:
     return get_agent_dir() / DB_FILE_NAME
 
 
+RAG_DB_FILE_NAME: str = "rag_cache.db"
+
+
+def get_rag_db_path() -> Path:
+    """Gets the path to the local SQLite file used for RAG chunks/embeddings.
+
+    RAG content is fully regenerable from source (the indexer re-derives it
+    on a timer), so it intentionally stays on local disk even when the core
+    relational data (agents/tasks/messages/...) is on PostgreSQL. When the
+    app is running against SQLite for everything, this points at the same
+    single database file as get_db_path() (unchanged historical behavior).
+    """
+    if os.environ.get("DATABASE_URL", "").strip():
+        return get_agent_dir() / RAG_DB_FILE_NAME
+    return get_db_path()
+
+
 # --- Environment Variable Check (Optional but good practice) ---
 OPENAI_API_KEY_ENV: Optional[str] = os.environ.get("OPENAI_API_KEY")  # From main.py:174
 # Debug print statement removed for clean console output

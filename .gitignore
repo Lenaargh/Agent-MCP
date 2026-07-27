@@ -376,4 +376,4 @@ agent_mcp/static/
 conversations/
 **/conversations/
 session-*/
-**/session-*/
+**/session-*/.venv/

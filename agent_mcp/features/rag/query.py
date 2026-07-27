@@ -11,7 +11,7 @@ from ...core.config import (
     CHAT_MODEL,
     MAX_CONTEXT_TOKENS,  # From main.py:182
 )
-from ...db.connection import get_db_connection, is_vss_loadable
+from ...db.connection import get_db_connection, get_rag_db_connection, is_vss_loadable
 from ...external.openai_service import get_openai_client
 
 # For OpenAI exceptions
@@ -39,13 +39,19 @@ async def query_rag_system(query_text: str) -> str:
         return "RAG Error: OpenAI client not available. Please check server configuration and OpenAI API key."
 
     conn = None
+    core_conn = None
     answer = (
         "An unexpected error occurred during the RAG query."  # Default error message
     )
 
     try:
-        conn = get_db_connection()
+        # rag_meta/rag_embeddings/rag_chunks stay on local SQLite regardless
+        # of DATABASE_URL; project_context/tasks live on the core connection
+        # (possibly PostgreSQL).
+        conn = get_rag_db_connection()
         cursor = conn.cursor()
+        core_conn = get_db_connection()
+        core_cursor = core_conn.cursor()
 
         live_context_results: List[Dict[str, Any]] = []
         live_task_results: List[Dict[str, Any]] = []
@@ -67,7 +73,7 @@ async def query_rag_system(query_text: str) -> str:
                 else "1970-01-01T00:00:00Z"
             )
 
-            cursor.execute(
+            core_cursor.execute(
                 """
                 SELECT context_key, value, description, last_updated
                 FROM project_context
@@ -78,7 +84,7 @@ async def query_rag_system(query_text: str) -> str:
                 (last_indexed_context_time,),
             )
             # Convert rows to dicts for easier processing
-            live_context_results = [dict(row) for row in cursor.fetchall()]
+            live_context_results = [dict(row) for row in core_cursor.fetchall()]
         except sqlite3.Error as e_live_ctx:
             logger.warning(
                 f"RAG Query: Failed to fetch live project context: {e_live_ctx}"
@@ -131,8 +137,8 @@ async def query_rag_system(query_text: str) -> str:
                             ORDER BY updated_at DESC
                             LIMIT 5
                         """
-                        cursor.execute(task_query_sql, sql_params_tasks)
-                    live_task_results = [dict(row) for row in cursor.fetchall()]
+                        core_cursor.execute(task_query_sql, sql_params_tasks)
+                    live_task_results = [dict(row) for row in core_cursor.fetchall()]
         except sqlite3.Error as e_live_task:
             logger.warning(
                 f"RAG Query: Failed to fetch live tasks based on query keywords: {e_live_task}"
@@ -333,6 +339,8 @@ Always err on the side of providing more detailed explanations and comprehensive
     finally:
         if conn:
             conn.close()
+        if core_conn:
+            core_conn.close()
 
     return answer
 
@@ -363,33 +371,39 @@ async def query_rag_system_with_model(
     context_limit = max_tokens if max_tokens else MAX_CONTEXT_TOKENS
 
     conn = None
+    core_conn = None
     answer = "An unexpected error occurred during the RAG query."
 
     try:
-        conn = get_db_connection()
+        # rag_meta/rag_embeddings/rag_chunks stay on local SQLite regardless
+        # of DATABASE_URL; project_context/tasks live on the core connection
+        # (possibly PostgreSQL).
+        conn = get_rag_db_connection()
         cursor = conn.cursor()
+        core_conn = get_db_connection()
+        core_cursor = core_conn.cursor()
 
         live_context_results: List[Dict[str, Any]] = []
         live_task_results: List[Dict[str, Any]] = []
         vector_search_results: List[Dict[str, Any]] = []
 
         # Get live context (same as regular RAG)
-        cursor.execute(
+        core_cursor.execute(
             "SELECT context_key, value, description, last_updated FROM project_context ORDER BY last_updated DESC"
         )
-        live_context_results = [dict(row) for row in cursor.fetchall()]
+        live_context_results = [dict(row) for row in core_cursor.fetchall()]
 
         # Get live tasks (same as regular RAG)
-        cursor.execute(
+        core_cursor.execute(
             """
-            SELECT task_id, title, description, status, created_by, assigned_to, 
-                   priority, parent_task, depends_on_tasks, created_at, updated_at 
-            FROM tasks 
-            WHERE status IN ('pending', 'in_progress') 
+            SELECT task_id, title, description, status, created_by, assigned_to,
+                   priority, parent_task, depends_on_tasks, created_at, updated_at
+            FROM tasks
+            WHERE status IN ('pending', 'in_progress')
             ORDER BY updated_at DESC
         """
         )
-        live_task_results = [dict(row) for row in cursor.fetchall()]
+        live_task_results = [dict(row) for row in core_cursor.fetchall()]
 
         # Get vector search results if VSS is available
         if is_vss_loadable():
@@ -567,5 +581,7 @@ Answer in the exact JSON format requested, but include thorough explanations in 
     finally:
         if conn:
             conn.close()
+        if core_conn:
+            core_conn.close()
 
     return answer

@@ -15,6 +15,7 @@ from ..core.auth import generate_token  # For admin token generation
 from ..utils.project_utils import init_agent_directory
 from ..db.schema import init_database as initialize_database_schema
 from ..db.connection import get_db_connection, check_vss_loadability
+from ..db.portable import upsert_sql, dialect_of
 from ..external.openai_service import initialize_openai_client
 from ..features.rag.indexing import run_rag_indexing_periodically
 
@@ -110,10 +111,12 @@ async def application_startup(
             effective_admin_token = admin_token_param
             token_source_description = "command-line parameter"
             cursor.execute(
-                """
-                INSERT OR REPLACE INTO project_context (context_key, value, last_updated, updated_by, description)
-                VALUES (?, ?, ?, ?, ?)
-            """,
+                upsert_sql(
+                    dialect_of(conn_admin_token),
+                    "project_context",
+                    ["context_key"],
+                    ["context_key", "value", "last_updated", "updated_by", "description"],
+                ),
                 (
                     admin_token_key_in_db,
                     json.dumps(effective_admin_token),
@@ -152,10 +155,12 @@ async def application_startup(
                 effective_admin_token = generate_token()
                 token_source_description = "newly generated"
                 cursor.execute(
-                    """
-                    INSERT OR REPLACE INTO project_context (context_key, value, last_updated, updated_by, description)
-                    VALUES (?, ?, ?, ?, ?)
-                """,
+                    upsert_sql(
+                        dialect_of(conn_admin_token),
+                        "project_context",
+                        ["context_key"],
+                        ["context_key", "value", "last_updated", "updated_by", "description"],
+                    ),
                     (
                         admin_token_key_in_db,
                         json.dumps(effective_admin_token),

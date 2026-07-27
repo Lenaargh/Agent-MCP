@@ -15,6 +15,7 @@ from ..core.auth import get_agent_id, verify_token
 from ..utils.audit_utils import log_audit
 from ..db.connection import get_db_connection
 from ..db.actions.agent_actions_db import log_agent_action_to_db
+from ..db.portable import upsert_sql, dialect_of
 
 
 def _normalize_filepath(filepath_arg: str, agent_id_for_wd: Optional[str]) -> str:
@@ -220,10 +221,12 @@ async def update_file_metadata_tool_impl(
         # For now, it only updates metadata, last_updated, updated_by.
         # (main.py:1561-1565)
         cursor.execute(
-            """
-            INSERT OR REPLACE INTO file_metadata (filepath, metadata, last_updated, updated_by)
-            VALUES (?, ?, ?, ?)
-        """,
+            upsert_sql(
+                dialect_of(conn),
+                "file_metadata",
+                ["filepath"],
+                ["filepath", "metadata", "last_updated", "updated_by"],
+            ),
             (
                 normalized_filepath_str,
                 metadata_json_str,

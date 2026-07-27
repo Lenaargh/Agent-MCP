@@ -402,13 +402,8 @@ def main_cli(
                 print(f"MCP Port: {TUITheme.info(str(cli_port))}")
                 current_row += 1
 
-                # Display admin token
-                admin_token = get_admin_token_from_db(cli_project_dir)
-                if admin_token:
-                    tui.move_cursor(current_row, 1)
-                    tui.clear_line()
-                    print(f"Admin Token: {TUITheme.info(admin_token)}")
-                    current_row += 1
+                # Never render authentication credentials in the TUI.
+
 
                 current_row += 2
 
@@ -536,10 +531,8 @@ def main_cli(
                         print(f"🚀 MCP Server running on port {port}")
                         print(f"📁 Project: {project_dir}")
 
-                        # Display admin token from database
-                        admin_token = get_admin_token_from_db(project_dir)
-                        if admin_token:
-                            print(f"🔑 Admin Token: {admin_token}")
+                        # Authentication credentials are never written to console logs.
+
 
                         print()
                         print("Next steps:")

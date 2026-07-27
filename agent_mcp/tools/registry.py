@@ -89,14 +89,33 @@ async def list_available_tools() -> List[mcp_types.Tool]:
     mcp_tool_list: List[mcp_types.Tool] = []
     for schema_dict in tool_schemas:
         try:
+            input_schema = dict(schema_dict["inputSchema"])
+            properties = dict(input_schema.get("properties", {}))
+            properties.pop("token", None)
+            input_schema["properties"] = properties
+            if "required" in input_schema:
+                input_schema["required"] = [
+                    field
+                    for field in input_schema["required"]
+                    if field != "token"
+                ]
+
             # Assuming mcp_types.Tool can be initialized like this:
             # Tool(name="...", description="...", inputSchema={...})
             # If it requires specific keyword arguments, adjust accordingly.
             # The original `types.Tool` in main.py was directly instantiated.
+            security_schemes = [
+                {
+                    "type": "oauth2",
+                    "scopes": ["hermes:access"],
+                }
+            ]
             tool_instance = mcp_types.Tool(
                 name=schema_dict["name"],
                 description=schema_dict["description"],
-                inputSchema=schema_dict["inputSchema"]
+                inputSchema=input_schema,
+                securitySchemes=security_schemes,
+                meta={"securitySchemes": security_schemes},
                 # outputSchema=schema_dict.get("outputSchema") # If you add outputSchema
             )
             mcp_tool_list.append(tool_instance)

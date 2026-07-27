@@ -5,15 +5,27 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List, Optional # Added List and Optional
 import os # Added os import
+from urllib.parse import urlparse
 
 from starlette.applications import Starlette
 from starlette.routing import Mount, Route # Added Route
 from starlette.middleware import Middleware # If any middleware is needed
 from starlette.middleware.cors import CORSMiddleware # Example if CORS is needed
+from starlette.middleware.authentication import AuthenticationMiddleware
+from starlette.responses import JSONResponse
+from starlette.types import Receive, Scope, Send
 
 # MCP Server specific imports
 from mcp.server.lowlevel import Server as MCPLowLevelServer # Renamed to avoid conflict
 from mcp.server.sse import SseServerTransport
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from mcp.server.auth.middleware.auth_context import AuthContextMiddleware
+from mcp.server.auth.middleware.bearer_auth import (
+    BearerAuthBackend,
+    RequireAuthMiddleware,
+)
+from mcp.server.auth.routes import build_resource_metadata_url
+from pydantic import AnyHttpUrl
 import mcp.types as mcp_types # For MCP tool types
 
 # Project-specific imports
@@ -21,6 +33,12 @@ from ..core.config import logger
 from ..core import globals as g # For g.connections (if still used for SSE tracking)
 from .routes import routes as http_routes # Import defined HTTP routes
 from .auth_middleware import BearerTokenAuthMiddleware
+from .auth0_token_verifier import (
+    Auth0TokenVerifier,
+    auth0_audience,
+    auth0_issuer,
+    auth0_required_scope,
+)
 from .server_lifecycle import application_startup, application_shutdown, start_background_tasks
 from ..tools.registry import list_available_tools, dispatch_tool_call
 
@@ -37,13 +55,43 @@ async def mcp_list_tools_handler() -> List[mcp_types.Tool]:
 @mcp_app_instance.call_tool()
 async def mcp_call_tool_handler(name: str, arguments: dict) -> List[mcp_types.TextContent]:
     """MCP endpoint to call a specific tool."""
-    # `dispatch_tool_call` from tools.registry handles sanitization and routing
-    return await dispatch_tool_call(name, arguments)
+    # HTTP transports authenticate before dispatch. Inject the internal admin
+    # credential here so it never appears in MCP tool schemas or model prompts.
+    trusted_arguments = dict(arguments or {})
+    trusted_arguments["token"] = g.admin_token
+    return await dispatch_tool_call(name, trusted_arguments)
 
 
 # --- SSE Transport Setup (mimicking original main.py:1943-1969 for SSE part) ---
 # The SseServerTransport handles /messages/ (POST for tool calls) and /sse (GET for connections)
 sse_transport = SseServerTransport("/messages/") # Path from original main.py:1943
+streamable_http_manager = StreamableHTTPSessionManager(
+    app=mcp_app_instance,
+    event_store=None,
+    json_response=True,
+    stateless=True,
+)
+auth0_token_verifier = Auth0TokenVerifier()
+
+
+async def streamable_http_handler(
+    scope: Scope, receive: Receive, send: Send
+) -> None:
+    """Serve the current MCP Streamable HTTP transport at /mcp."""
+    await streamable_http_manager.handle_request(scope, receive, send)
+
+
+async def protected_resource_metadata(request) -> JSONResponse:
+    """Advertise Auth0 as the authorization server for Agent-MCP."""
+    return JSONResponse(
+        {
+            "resource": auth0_audience(),
+            "authorization_servers": [auth0_issuer()],
+            "scopes_supported": [auth0_required_scope()],
+            "bearer_methods_supported": ["header"],
+            "resource_name": "Hermes Agent MCP",
+        }
+    )
 
 async def sse_connection_handler(request): # Starlette Request object
     """Handles new SSE client connections."""
@@ -101,7 +149,8 @@ def create_app(project_dir: str, admin_token_cli: Optional[str] = None) -> Starl
         # Startup
         await application_startup(project_dir_path_str=project_dir, admin_token_param=admin_token_cli)
         logger.info("Starlette app startup complete. Background tasks should be started by the server runner.")
-        yield
+        async with streamable_http_manager.run():
+            yield
         # Shutdown
         await application_shutdown()
         logger.info("Starlette app shutdown complete.")
@@ -123,9 +172,9 @@ def create_app(project_dir: str, admin_token_cli: Optional[str] = None) -> Starl
             allow_credentials=False,
             allow_methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD', 'PATCH'],
             allow_headers=['*'],
-            expose_headers=['*'],
+            expose_headers=['*', 'Mcp-Session-Id'],
             max_age=3600,  # Cache preflight for 1 hour
-        )
+        ),
     ]
 
     # Create the Starlette app
@@ -149,6 +198,46 @@ def create_app(project_dir: str, admin_token_cli: Optional[str] = None) -> Starl
     all_routes.append(Route('/sse', endpoint=sse_connection_handler, name="sse_connect"))
     # Add the SseServerTransport's POST message handler as a Mount with ASGI app wrapper
     all_routes.append(Mount('/messages', app=MessageHandlerApp(), name="mcp_post_message"))
+
+    resource_url = AnyHttpUrl(auth0_audience())
+    resource_metadata_url = build_resource_metadata_url(resource_url)
+    oauth_mcp_handler = AuthenticationMiddleware(
+        AuthContextMiddleware(
+            RequireAuthMiddleware(
+                streamable_http_handler,
+                [auth0_required_scope()],
+                resource_metadata_url,
+            )
+        ),
+        backend=BearerAuthBackend(auth0_token_verifier),
+    )
+    all_routes.append(
+        Route(
+            "/mcp",
+            endpoint=oauth_mcp_handler,
+            name="mcp_streamable_http",
+            methods=["GET", "POST", "DELETE"],
+        )
+    )
+    # Publish both the RFC 9728 path-specific location and the widely used
+    # root fallback. Both documents describe the same canonical /mcp resource.
+    metadata_path = urlparse(str(resource_metadata_url)).path
+    all_routes.append(
+        Route(
+            metadata_path,
+            endpoint=protected_resource_metadata,
+            name="oauth_protected_resource_mcp",
+            methods=["GET", "OPTIONS"],
+        )
+    )
+    all_routes.append(
+        Route(
+            "/.well-known/oauth-protected-resource",
+            endpoint=protected_resource_metadata,
+            name="oauth_protected_resource_root",
+            methods=["GET", "OPTIONS"],
+        )
+    )
 
     # Note: Static file serving removed - dashboard is now served separately via npm run dev
     

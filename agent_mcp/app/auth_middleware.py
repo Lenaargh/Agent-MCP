@@ -34,9 +34,19 @@ class BearerTokenAuthMiddleware:
             return
 
         path = scope.get("path", "")
+        normalized_path = path.rstrip("/") or "/"
         method = scope.get("method", "GET").upper()
 
-        if method == "OPTIONS" or (path == "/api/status" and method in {"GET", "HEAD"}):
+        oauth_public_paths = {
+            "/.well-known/oauth-protected-resource",
+            "/.well-known/oauth-protected-resource/mcp",
+        }
+        if (
+            method == "OPTIONS"
+            or (path == "/api/status" and method in {"GET", "HEAD"})
+            or normalized_path == "/mcp"
+            or normalized_path in oauth_public_paths
+        ):
             await self.app(scope, receive, send)
             return
 

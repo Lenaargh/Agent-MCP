@@ -12,3 +12,6 @@ pyperclip
 mcp==1.28.1
 PyJWT[crypto]>=2.10,<3
 requests
+psycopg2-binary>=2.9,<3
+SQLAlchemy>=2.0,<3
+alembic>=1.13,<2

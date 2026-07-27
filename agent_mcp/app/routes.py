@@ -18,6 +18,7 @@ from ..core.auth import verify_token, get_agent_id as auth_get_agent_id
 from ..utils.json_utils import get_sanitized_json_body
 from ..db.connection import get_db_connection
 from ..db.actions.agent_actions_db import log_agent_action_to_db
+from ..db.portable import upsert_sql, dialect_of
 
 from ..features.dashboard.api import (
     fetch_graph_data_logic,
@@ -573,10 +574,14 @@ async def create_sample_memories_route(request: Request) -> JSONResponse:
         created_count = 0
         
         for memory in sample_memories:
-            cursor.execute("""
-                INSERT OR REPLACE INTO project_context (context_key, value, last_updated, updated_by, description)
-                VALUES (?, ?, ?, ?, ?)
-            """, (
+            cursor.execute(
+                upsert_sql(
+                    dialect_of(conn),
+                    "project_context",
+                    ["context_key"],
+                    ["context_key", "value", "last_updated", "updated_by", "description"],
+                ),
+                (
                 memory['context_key'],
                 memory['value'],
                 current_time,

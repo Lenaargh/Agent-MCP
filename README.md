@@ -496,6 +496,16 @@ Access at `http://localhost:3847` after launching the dashboard.
 
 ## Advanced Features
 
+### Database & Persistence
+
+By default, Agent-MCP stores agents, tasks, messages, and project context in
+a local SQLite file. For deployments that get redeployed or restarted (e.g.
+DigitalOcean App Platform, where local disk is ephemeral), set a
+`DATABASE_URL` environment variable to use PostgreSQL instead — schema
+migrations are applied automatically and safely on startup. See
+[docs/database-persistence.md](docs/database-persistence.md) for the full
+configuration reference.
+
 ### Specialized Agent Modes
 
 Agent modes fundamentally change how agents behave. They're not just configuration - they're behavioral contracts that ensure agents follow specific patterns optimized for their role.

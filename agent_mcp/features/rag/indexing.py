@@ -27,7 +27,7 @@ from ...core.config import (
     ADVANCED_EMBEDDINGS,  # Import advanced mode flag at module level
 )
 from ...core import globals as g  # For server_running flag
-from ...db.connection import get_db_connection, is_vss_loadable
+from ...db.connection import get_db_connection, get_rag_db_connection, is_vss_loadable
 
 # We need the actual OpenAI client, not just the service module, for batching logic.
 # The client instance is stored in g.openai_client_instance by openai_service.initialize_openai_client()
@@ -181,10 +181,17 @@ async def run_rag_indexing_periodically(
             )
 
         conn = None  # Initialize conn here for broader scope in try-finally
+        core_conn = None  # Separate connection for core tables (tasks, project_context)
 
         try:
-            conn = get_db_connection()
+            # RAG chunks/meta/embeddings stay on local SQLite regardless of
+            # DATABASE_URL (see get_rag_db_connection docstring). Reading the
+            # core tables below (project_context, tasks) needs the app's
+            # regular connection, which may be PostgreSQL.
+            conn = get_rag_db_connection()
             cursor = conn.cursor()
+            core_conn = get_db_connection()
+            core_cursor = core_conn.cursor()
 
             # Check if VSS is usable (vec0 table exists as a proxy)
             # Original main.py:526-531
@@ -350,11 +357,11 @@ async def run_rag_indexing_periodically(
             )
 
             # The original checked `last_updated > ?`. This is good.
-            cursor.execute(
+            core_cursor.execute(
                 "SELECT context_key, value, description, last_updated FROM project_context WHERE last_updated > ?",
                 (last_ctx_time_str,),
             )
-            for row in cursor.fetchall():
+            for row in core_cursor.fetchall():
                 key = row["context_key"]
                 value_str = row["value"]  # Already a JSON string in DB
                 desc = row["description"] or ""
@@ -385,14 +392,14 @@ async def run_rag_indexing_periodically(
                 )
 
                 # Get tasks that have been updated since last indexing
-                cursor.execute(
+                core_cursor.execute(
                     "SELECT task_id, title, description, status, assigned_to, created_by, "
                     "parent_task, depends_on_tasks, priority, created_at, updated_at "
                     "FROM tasks WHERE updated_at > ?",
                     (last_task_time_str,),
                 )
 
-                for task_row in cursor.fetchall():
+                for task_row in core_cursor.fetchall():
                     task_data = dict(task_row)
                     task_id = task_data["task_id"]
                     last_mod_iso = task_data["updated_at"]
@@ -839,6 +846,8 @@ async def run_rag_indexing_periodically(
         finally:
             if conn:
                 conn.close()
+            if core_conn:
+                core_conn.close()
 
         elapsed_cycle_time = time.time() - cycle_start_time
         logger.info(
@@ -876,7 +885,7 @@ async def index_task_data(task_id: str, task_data: Dict[str, Any]) -> None:
 
     conn = None
     try:
-        conn = get_db_connection()
+        conn = get_rag_db_connection()
         cursor = conn.cursor()
 
         # Format task for embedding
@@ -945,19 +954,22 @@ async def index_task_data(task_id: str, task_data: Dict[str, Any]) -> None:
 
 async def index_all_tasks() -> None:
     """Index all tasks from the database."""
+    core_conn = None
     conn = None
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        # Tasks live in the core database (possibly PostgreSQL); rag_meta
+        # lives in the local RAG cache (always SQLite).
+        core_conn = get_db_connection()
+        core_cursor = core_conn.cursor()
 
         # Get all tasks
-        cursor.execute(
+        core_cursor.execute(
             "SELECT task_id, title, description, status, assigned_to, created_by, "
             "parent_task, depends_on_tasks, priority, created_at, updated_at "
             "FROM tasks"
         )
 
-        tasks = cursor.fetchall()
+        tasks = core_cursor.fetchall()
         logger.info(f"Indexing {len(tasks)} tasks for RAG")
 
         for task_row in tasks:
@@ -974,6 +986,8 @@ async def index_all_tasks() -> None:
             await index_task_data(task_data["task_id"], task_data)
 
         # Update last indexed time
+        conn = get_rag_db_connection()
+        cursor = conn.cursor()
         cursor.execute(
             "INSERT OR REPLACE INTO rag_meta (meta_key, meta_value) VALUES (?, ?)",
             ("last_indexed_tasks", datetime.datetime.now().isoformat()),
@@ -983,6 +997,8 @@ async def index_all_tasks() -> None:
     except Exception as e:
         logger.error(f"Error indexing all tasks: {e}", exc_info=True)
     finally:
+        if core_conn:
+            core_conn.close()
         if conn:
             conn.close()
 

@@ -9,6 +9,7 @@ from typing import Optional, Dict, Any
 from ..core.config import logger, get_project_dir
 from ..db.connection import get_db_connection
 from ..db.actions.agent_actions_db import log_agent_action_to_db
+from ..db.portable import upsert_sql, dialect_of
 
 
 class ClaudeSessionMonitor:
@@ -102,11 +103,21 @@ class ClaudeSessionMonitor:
 
             # Insert new session
             cursor.execute(
-                """
-                INSERT OR REPLACE INTO claude_code_sessions 
-                (session_id, pid, parent_pid, first_detected, last_activity, working_directory, status, metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+                upsert_sql(
+                    dialect_of(conn),
+                    "claude_code_sessions",
+                    ["session_id"],
+                    [
+                        "session_id",
+                        "pid",
+                        "parent_pid",
+                        "first_detected",
+                        "last_activity",
+                        "working_directory",
+                        "status",
+                        "metadata",
+                    ],
+                ),
                 (
                     session_id,
                     session_data.get("pid", 0),

@@ -13,6 +13,7 @@ from ..core.auth import get_agent_id, verify_token
 from ..utils.audit_utils import log_audit
 from ..db.connection import get_db_connection, execute_db_write
 from ..db.actions.agent_actions_db import log_agent_action_to_db
+from ..db.portable import upsert_sql, dialect_of
 
 
 def _analyze_context_health(context_entries: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -463,12 +464,14 @@ async def _handle_single_context_update(
             cursor = conn.cursor()
             updated_at_iso = datetime.datetime.now().isoformat()
 
-            # Use INSERT OR REPLACE (UPSERT)
+            # Use a portable upsert (SQLite: INSERT OR REPLACE, PostgreSQL: ON CONFLICT)
             cursor.execute(
-                """
-                INSERT OR REPLACE INTO project_context (context_key, value, last_updated, updated_by, description)
-                VALUES (?, ?, ?, ?, ?)
-            """,
+                upsert_sql(
+                    dialect_of(conn),
+                    "project_context",
+                    ["context_key"],
+                    ["context_key", "value", "last_updated", "updated_by", "description"],
+                ),
                 (
                     context_key_to_update,
                     value_json_str,
@@ -571,10 +574,12 @@ async def _handle_bulk_context_update(
 
                     # Execute update
                     cursor.execute(
-                        """
-                        INSERT OR REPLACE INTO project_context (context_key, value, last_updated, updated_by, description)
-                        VALUES (?, ?, ?, ?, ?)
-                    """,
+                        upsert_sql(
+                            dialect_of(conn),
+                            "project_context",
+                            ["context_key"],
+                            ["context_key", "value", "last_updated", "updated_by", "description"],
+                        ),
                         (
                             context_key,
                             value_json_str,
@@ -779,10 +784,12 @@ async def bulk_update_project_context_tool_impl(
 
                 # Execute update
                 cursor.execute(
-                    """
-                    INSERT OR REPLACE INTO project_context (context_key, value, last_updated, updated_by, description)
-                    VALUES (?, ?, ?, ?, ?)
-                """,
+                    upsert_sql(
+                        dialect_of(conn),
+                        "project_context",
+                        ["context_key"],
+                        ["context_key", "value", "last_updated", "updated_by", "description"],
+                    ),
                     (
                         context_key,
                         value_json_str,

@@ -20,6 +20,7 @@ import mcp.types as mcp_types # For MCP tool types
 from ..core.config import logger
 from ..core import globals as g # For g.connections (if still used for SSE tracking)
 from .routes import routes as http_routes # Import defined HTTP routes
+from .auth_middleware import BearerTokenAuthMiddleware
 from .server_lifecycle import application_startup, application_shutdown, start_background_tasks
 from ..tools.registry import list_available_tools, dispatch_tool_call
 
@@ -108,16 +109,18 @@ def create_app(project_dir: str, admin_token_cli: Optional[str] = None) -> Starl
     # Define middleware (if any)
     # Enable CORS for dashboard integration - comprehensive CORS config
     middleware_stack = [
+        Middleware(BearerTokenAuthMiddleware),
         Middleware(
             CORSMiddleware,
             allow_origins=[
-                'http://localhost:3847',  # Primary dashboard port
-                'http://127.0.0.1:3847',  # Alternative localhost
-                'http://localhost:3000',  # Next.js default
-                'http://localhost:3001',  # Common alternative
-                '*'  # Fallback for any other ports during development
+                origin.strip()
+                for origin in os.environ.get(
+                    "MCP_ALLOWED_ORIGINS",
+                    "http://localhost:3847,http://127.0.0.1:3847",
+                ).split(",")
+                if origin.strip()
             ],
-            allow_credentials=True,
+            allow_credentials=False,
             allow_methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD', 'PATCH'],
             allow_headers=['*'],
             expose_headers=['*'],

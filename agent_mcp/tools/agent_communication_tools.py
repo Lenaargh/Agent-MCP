@@ -48,12 +48,29 @@ def _can_agents_communicate(sender_id: str, recipient_id: str, is_admin: bool) -
     if recipient_id == "admin" or recipient_id.lower().startswith("admin"):
         return True, "Admin agent always contactable"
     
-    # Check if recipient allows communication from sender
-    # This could be extended with a permission system in the database
-    # For now, we'll use a simple rule: agents can communicate if they're both active
-    if sender_id in g.active_agents and recipient_id in g.active_agents:
-        return True, "Both agents are active"
-    
+    # Agent records are stored by ID in the database, while g.active_agents is
+    # keyed by private token. Comparing IDs with that dictionary therefore
+    # denied every non-admin sender. Permit collaboration only when both sides
+    # are registered and have not been terminated.
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT agent_id
+            FROM agents
+            WHERE agent_id IN (?, ?)
+              AND terminated_at IS NULL
+            """,
+            (sender_id, recipient_id),
+        )
+        registered_ids = {row["agent_id"] for row in cursor.fetchall()}
+    finally:
+        conn.close()
+
+    if sender_id in registered_ids and recipient_id in registered_ids:
+        return True, "Both agents are registered"
+
     # Check if either agent is in the same task context
     # (This would require additional task relationship checking)
     

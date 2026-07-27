@@ -614,10 +614,7 @@ def main_cli(
                         print("🚀 MCP Server running (stdio transport)")
                         print("Server is ready for AI assistant connections.")
 
-                        # Display admin token from database
-                        admin_token = get_admin_token_from_db(project_dir)
-                        if admin_token:
-                            print(f"🔑 Admin Token: {admin_token}")
+                        # Authentication credentials are never written to console logs.
 
                         print("Use Ctrl+C to quit.")
 

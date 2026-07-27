@@ -30,6 +30,7 @@ from ..tools.admin_tools import (
     create_agent_tool_impl,
     terminate_agent_tool_impl
 )
+from ..tools.registry import list_available_tools, dispatch_tool_call
 import mcp.types as mcp_types # For handling the result from tool_impl
 
 # --- Dashboard and API Endpoints ---
@@ -155,16 +156,11 @@ async def agents_list_api_route(request: Request) -> JSONResponse:
     return JSONResponse(agents_list_data)
 
 async def tokens_api_route(request: Request) -> JSONResponse:
-    # // ... (implementation from previous response)
-    try:
-        agent_tokens_list = []
-        for token, data in g.active_agents.items():
-            if data.get("status") != "terminated":
-                agent_tokens_list.append({"agent_id": data.get("agent_id"), "token": token})
-        return JSONResponse({"admin_token": g.admin_token, "agent_tokens": agent_tokens_list})
-    except Exception as e:
-        logger.error(f"Error retrieving tokens for dashboard: {e}", exc_info=True)
-        return JSONResponse({"error": f"Error retrieving tokens: {str(e)}"}, status_code=500)
+    """Token export is deliberately disabled for remote deployments."""
+    return JSONResponse(
+        {"error": "Credential export is disabled"},
+        status_code=404,
+    )
 
 async def all_tasks_api_route(request: Request) -> JSONResponse:
     # // ... (implementation from previous response)
@@ -354,21 +350,15 @@ async def all_data_api_route(request: Request) -> JSONResponse:
             agent_dict = dict(row)
             agent_id = agent_dict['agent_id']
             
-            # Find token for this agent from active_agents
-            agent_token = None
-            for token, data in g.active_agents.items():
-                if data.get("agent_id") == agent_id and data.get("status") != "terminated":
-                    agent_token = token
-                    break
-            
-            agent_dict['auth_token'] = agent_token
+            # Authentication credentials must never be returned to dashboards.
+            agent_dict.pop('token', None)
+            agent_dict.pop('auth_token', None)
             agents_data.append(agent_dict)
         
         # Add admin as special agent
         agents_data.insert(0, {
             'agent_id': 'Admin',
             'status': 'system',
-            'auth_token': g.admin_token,
             'created_at': 'N/A',
             'current_task': 'N/A'
         })
@@ -400,7 +390,6 @@ async def all_data_api_route(request: Request) -> JSONResponse:
             "actions": actions_data,
             "file_metadata": file_metadata,
             "file_map": g.file_map,
-            "admin_token": g.admin_token,
             "timestamp": datetime.datetime.now().isoformat()
         }
         
@@ -463,8 +452,60 @@ async def handle_options(request: Request) -> Response:
         }
     )
 
+
+async def tools_list_api_route(request: Request) -> JSONResponse:
+    """List tools for trusted server-to-server integrations."""
+    tools = await list_available_tools()
+    return JSONResponse({
+        "tools": [
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "inputSchema": tool.inputSchema,
+            }
+            for tool in tools
+        ]
+    })
+
+
+async def call_tool_api_route(request: Request) -> JSONResponse:
+    """Call an MCP tool over authenticated JSON HTTP.
+
+    This bridge is for Hermes Hub. The bearer credential is injected as the
+    tool token on the server so it never appears in browser requests or model
+    prompts.
+    """
+    try:
+        body = await get_sanitized_json_body(request)
+        arguments = body.get("arguments", body)
+        if not isinstance(arguments, dict):
+            return JSONResponse({"error": "arguments must be an object"}, status_code=400)
+
+        authorization = request.headers.get("authorization", "")
+        if not authorization.lower().startswith("bearer "):
+            return JSONResponse({"error": "Bearer authentication required"}, status_code=401)
+
+        trusted_arguments = dict(arguments)
+        trusted_arguments["token"] = authorization[7:].strip()
+        tool_name = request.path_params["tool_name"]
+        result = await dispatch_tool_call(tool_name, trusted_arguments)
+        return JSONResponse({
+            "tool": tool_name,
+            "content": [
+                {"type": item.type, "text": item.text}
+                for item in result
+            ],
+        })
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except Exception as exc:
+        logger.error(f"Error calling trusted tool bridge: {exc}", exc_info=True)
+        return JSONResponse({"error": "Tool call failed"}, status_code=500)
+
 # --- Route Definitions List ---
 routes = [
+    Route('/api/tools', endpoint=tools_list_api_route, name="tools_list_api", methods=['GET', 'OPTIONS']),
+    Route('/api/tools/{tool_name}', endpoint=call_tool_api_route, name="call_tool_api", methods=['POST', 'OPTIONS']),
     Route('/api/all-data', endpoint=all_data_api_route, name="all_data_api", methods=['GET', 'OPTIONS']),
     Route('/api/status', endpoint=simple_status_api_route, name="simple_status_api", methods=['GET', 'OPTIONS']),
     Route('/api/graph-data', endpoint=graph_data_api_route, name="graph_data_api", methods=['GET', 'OPTIONS']),

@@ -19,7 +19,10 @@ from starlette.types import Receive, Scope, Send
 from mcp.server.lowlevel import Server as MCPLowLevelServer # Renamed to avoid conflict
 from mcp.server.sse import SseServerTransport
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-from mcp.server.auth.middleware.auth_context import AuthContextMiddleware
+from mcp.server.auth.middleware.auth_context import (
+    AuthContextMiddleware,
+    get_access_token,
+)
 from mcp.server.auth.middleware.bearer_auth import (
     BearerAuthBackend,
     RequireAuthMiddleware,
@@ -39,8 +42,13 @@ from .auth0_token_verifier import (
     auth0_issuer,
     auth0_required_scope,
 )
+from .oauth_agent_identity import ensure_oauth_agent
 from .server_lifecycle import application_startup, application_shutdown, start_background_tasks
-from ..tools.registry import list_available_tools, dispatch_tool_call
+from ..tools.registry import (
+    dispatch_tool_call,
+    is_oauth_agent_tool,
+    list_available_tools,
+)
 
 # --- MCP Server Setup (mimicking original main.py:2055) ---
 mcp_app_instance = MCPLowLevelServer("mcp-server") # Name from original main.py:2055
@@ -50,15 +58,31 @@ mcp_app_instance = MCPLowLevelServer("mcp-server") # Name from original main.py:
 @mcp_app_instance.list_tools()
 async def mcp_list_tools_handler() -> List[mcp_types.Tool]:
     """MCP endpoint to list available tools."""
-    return await list_available_tools() # Calls the function from tools.registry
+    return await list_available_tools(
+        oauth_agent_only=get_access_token() is not None
+    )
 
 @mcp_app_instance.call_tool()
 async def mcp_call_tool_handler(name: str, arguments: dict) -> List[mcp_types.TextContent]:
     """MCP endpoint to call a specific tool."""
-    # HTTP transports authenticate before dispatch. Inject the internal admin
-    # credential here so it never appears in MCP tool schemas or model prompts.
     trusted_arguments = dict(arguments or {})
-    trusted_arguments["token"] = g.admin_token
+    access_token = get_access_token()
+    if access_token is not None:
+        if not is_oauth_agent_tool(name):
+            return [
+                mcp_types.TextContent(
+                    type="text",
+                    text=(
+                        "Forbidden: this tool is not available to interactive "
+                        "OAuth agents."
+                    ),
+                )
+            ]
+        trusted_arguments["token"] = ensure_oauth_agent(access_token)
+    else:
+        # The private Hub transport authenticates at the server boundary and
+        # retains its server-to-server administrative role.
+        trusted_arguments["token"] = g.admin_token
     return await dispatch_tool_call(name, trusted_arguments)
 
 

@@ -7,6 +7,29 @@ from ..utils.json_utils import sanitize_json_input, get_sanitized_json_body
 # Import the central logger
 from ..core.config import logger
 
+OAUTH_AGENT_TOOL_NAMES = {
+    "ask_project_rag",
+    "check_file_status",
+    "create_self_task",
+    "get_agent_messages",
+    "list_agents",
+    "request_assistance",
+    "search_tasks",
+    "send_agent_message",
+    "test",
+    "update_file_status",
+    "update_task_status",
+    "validate_context_consistency",
+    "view_file_metadata",
+    "view_project_context",
+    "view_tasks",
+}
+
+
+def is_oauth_agent_tool(tool_name: str) -> bool:
+    """Whether an OAuth-connected interactive agent may call a tool."""
+    return tool_name in OAUTH_AGENT_TOOL_NAMES
+
 # Tool implementations will be imported here once they are created.
 # For now, we'll define placeholders for the functions they will call.
 # These will be replaced by actual imports from other tool modules.
@@ -71,7 +94,7 @@ def register_tool(
     logger.info(f"Registered tool: {name}")
 
 
-async def list_available_tools() -> List[mcp_types.Tool]:
+async def list_available_tools(oauth_agent_only: bool = False) -> List[mcp_types.Tool]:
     """
     Returns a list of available tools with their schemas.
     This replaces the logic from `@app.list_tools()` in main.py (lines 1636-1858).
@@ -88,6 +111,8 @@ async def list_available_tools() -> List[mcp_types.Tool]:
     
     mcp_tool_list: List[mcp_types.Tool] = []
     for schema_dict in tool_schemas:
+        if oauth_agent_only and not is_oauth_agent_tool(schema_dict["name"]):
+            continue
         try:
             input_schema = dict(schema_dict["inputSchema"])
             properties = dict(input_schema.get("properties", {}))

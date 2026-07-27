@@ -177,6 +177,26 @@ def init_database() -> None:
         )
         logger.debug("Agents table ensured.")
 
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS oauth_agent_bindings (
+                issuer TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                client_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (issuer, subject, client_id),
+                FOREIGN KEY (agent_id) REFERENCES agents(agent_id)
+            )
+        """
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_oauth_agent_bindings_agent_id "
+            "ON oauth_agent_bindings (agent_id)"
+        )
+        logger.debug("OAuth agent bindings table ensured.")
+
         # Tasks Table (Original main.py lines 287-303)
         cursor.execute(
             """

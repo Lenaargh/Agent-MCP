@@ -16,6 +16,55 @@ from ..db.actions.agent_actions_db import log_agent_action_to_db
 from ..utils.audit_utils import log_audit
 
 
+async def list_agents_tool_impl(
+    arguments: Dict[str, Any],
+) -> List[mcp_types.TextContent]:
+    """List registered agents without exposing credentials."""
+    agent_token = arguments.get("token")
+    if not verify_token(agent_token, "agent"):
+        return [
+            mcp_types.TextContent(
+                type="text", text="Unauthorized: Valid agent token required"
+            )
+        ]
+
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT agent_id, capabilities, status, current_task, updated_at
+            FROM agents
+            WHERE terminated_at IS NULL
+            ORDER BY agent_id
+            """
+        )
+        agents = []
+        for row in cursor.fetchall():
+            try:
+                capabilities = json.loads(row["capabilities"] or "[]")
+            except json.JSONDecodeError:
+                capabilities = []
+            agents.append(
+                {
+                    "agent_id": row["agent_id"],
+                    "capabilities": capabilities,
+                    "status": row["status"],
+                    "current_task": row["current_task"],
+                    "updated_at": row["updated_at"],
+                }
+            )
+
+        return [
+            mcp_types.TextContent(
+                type="text",
+                text=json.dumps({"agents": agents}, indent=2),
+            )
+        ]
+    finally:
+        conn.close()
+
+
 async def register_external_agent_tool_impl(
     arguments: Dict[str, Any],
 ) -> List[mcp_types.TextContent]:
@@ -184,6 +233,24 @@ async def register_external_agent_tool_impl(
     finally:
         if conn:
             conn.close()
+
+
+register_tool(
+    name="list_agents",
+    description="List registered agents and their capabilities without credentials.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "token": {
+                "type": "string",
+                "description": "Agent authentication token",
+            }
+        },
+        "required": ["token"],
+        "additionalProperties": False,
+    },
+    implementation=list_agents_tool_impl,
+)
 
 
 register_tool(

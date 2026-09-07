@@ -314,6 +314,7 @@ ehthumbs.db
 Thumbs.db
 
 # Agent-MCP specific files
+.alpic/
 .agent/
 .agent-*/
 *.agent.log

@@ -3,6 +3,7 @@
 import os
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -32,3 +33,17 @@ def test_alpic_start_requires_explicit_persistence_and_auth(missing):
         "Missing required Alpic environment variables: " + missing
     )
     assert "never-print-this" not in result.stdout + result.stderr
+
+
+def test_alpic_start_uses_writable_project_directory(monkeypatch, tmp_path):
+    from agent_mcp import alpic_start
+
+    for name in ("DATABASE_URL", "HERMES_MCP_TOKEN", "AUTH0_ISSUER", "AUTH0_AUDIENCE"):
+        monkeypatch.setenv(name, "test-value")
+    project_dir = tmp_path / "runtime"
+    monkeypatch.setenv("MCP_PROJECT_DIR", str(project_dir))
+    calls = []
+    monkeypatch.setitem(sys.modules, "agent_mcp.cli", SimpleNamespace(main_cli=lambda **kw: calls.append(kw)))
+    alpic_start.main()
+    assert project_dir.is_dir()
+    assert calls == [{"args": ["--transport", "sse", "--no-tui", "--project-dir", str(project_dir)]}]
